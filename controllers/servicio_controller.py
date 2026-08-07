@@ -18,7 +18,8 @@ async def create_servicio(servicio: ServicioCreate, db: AsyncSession = Depends(g
             raise HTTPException(status_code=400, detail="Este servicio ya existe")
 
         new_servicio = Servicio(
-            servicio = servicio.servicio
+            servicio = servicio.servicio,
+            precio = servicio.precio
         )
 
         db.add(new_servicio)

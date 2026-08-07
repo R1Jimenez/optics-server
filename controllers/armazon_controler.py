@@ -18,7 +18,8 @@ async def create_armazon(armazon: ArmazonCreate, db: AsyncSession = Depends(get_
             raise HTTPException(status_code=400, detail="Este armazón ya existe")
 
         new_armazon = Armazon(
-            marca = armazon.marca
+            marca = armazon.marca,
+            precio = armazon.precio
         )
 
         db.add(new_armazon)

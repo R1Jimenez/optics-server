@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from database.database import Base
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from models.tipo_cliente_model import TipoClienteOut
 
 class Cliente(Base):
     __tablename__ = "clientes"

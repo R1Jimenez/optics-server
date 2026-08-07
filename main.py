@@ -4,7 +4,13 @@ from database.database import engine, Base
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes import opticaroutes
-from controllers import users_controller, estado_sucursal_controller, tipo_sucursal_controller, sucursales_controller, users_roles_contoller, tipo_cliente_controller, clientes_controller, pacientes_controller, armazon_controler, servicio_controller, material_controller
+from controllers import (users_controller, estado_sucursal_controller, tipo_sucursal_controller, sucursales_controller,
+                         users_roles_contoller, tipo_cliente_controller, clientes_controller, pacientes_controller,
+                         armazon_controler, servicio_controller, material_controller, tipo_venta_controller,
+                         plazo_controller, producto_controller, order_controller, orders_controller, tiprod_controller,
+                         marcaprod_controller, modeloprod_controller, tipolente_controller, materialente_controller,
+                         colorlente_controller, rangolente_controller, ordenproducto_controller, atributos_controller,
+                         atributos_valores_controller, precios_sucursal_controller)
 
 app = FastAPI()
 
@@ -58,6 +64,22 @@ app.include_router(pacientes_controller.router)
 app.include_router(armazon_controler.router)
 app.include_router(servicio_controller.router)
 app.include_router(material_controller.router)
+app.include_router(tipo_venta_controller.router)
+app.include_router(plazo_controller.router)
+app.include_router(producto_controller.router)
+app.include_router(order_controller.router)
+app.include_router(orders_controller.router)
+app.include_router(tiprod_controller.router)
+app.include_router(marcaprod_controller.router)
+app.include_router(modeloprod_controller.router)
+app.include_router(tipolente_controller.router)
+app.include_router(materialente_controller.router)
+app.include_router(colorlente_controller.router)
+app.include_router(rangolente_controller.router)
+app.include_router(ordenproducto_controller.router)
+app.include_router(atributos_controller.router)
+app.include_router(atributos_valores_controller.router)
+app.include_router(precios_sucursal_controller.router)
 @app.get("/")
 async def root():
     return {"message": "FastAPI + PostgresSQL funcionan!"}
