@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.rangolente_model import RangoLente, RangoLenteCreate, RangoLenteUpdate, RangoLenteOut
 
-router = APIRouter(prefix="/rangolente", tags=["Rango de Lente"])
+router = APIRouter(prefix="/rangolente", tags=["Rango de Lente"], dependencies=[Depends(get_current_user)])
 
 
 @router.post('/create', response_model=RangoLenteOut)

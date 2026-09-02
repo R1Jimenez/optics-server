@@ -2,10 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.clientes_model import Cliente, CreateCliente, ClienteOut, ClienteUpdate
 from models.tipo_cliente_model import Tipo_Cliente
 
-router = APIRouter(prefix="/cliente", tags=["cliente"])
+router = APIRouter(prefix="/cliente", tags=["cliente"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=ClienteOut)
 async def create_cliente(cliente: CreateCliente, db: AsyncSession = Depends(get_db)):

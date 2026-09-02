@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.servico_model import Servicio, ServicioCreate, ServicioUpdate, ServicioOut
 
-router = APIRouter(prefix="/servicios", tags=["Servicios"])
+router = APIRouter(prefix="/servicios", tags=["Servicios"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=ServicioOut)
 async def create_servicio(servicio: ServicioCreate, db: AsyncSession = Depends(get_db)):

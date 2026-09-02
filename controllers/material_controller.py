@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.material_model import Material, MaterialCreate, MaterialUpdate, MaterialOut
 
-router = APIRouter(prefix="/materiales", tags=["Materiales"])
+router = APIRouter(prefix="/materiales", tags=["Materiales"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=MaterialOut)
 async def create_material(material: MaterialCreate, db: AsyncSession = Depends(get_db)):

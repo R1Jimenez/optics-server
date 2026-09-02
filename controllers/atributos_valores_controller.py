@@ -2,10 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.atributos_valores_model import AtributosValores, AtribValoresCreate, AtribValoresOutput, AtribValoresUpdate
 from models.atributos_model import Atributo
 
-router = APIRouter(prefix="/atributosvalores", tags=["AtributosValores"])
+router = APIRouter(prefix="/atributosvalores", tags=["AtributosValores"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=AtribValoresOutput)
 async def create_valor(valor: AtribValoresCreate, db: AsyncSession = Depends(get_db)):

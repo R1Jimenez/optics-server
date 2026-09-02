@@ -3,11 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.producto_model import Productos, ProductoCreate, ProductoAtributo, ProductOut
 from models.atributos_model import Atributo
 from models.atributos_valores_model import AtributosValores
 
-router = APIRouter(prefix="/productos", tags=["Productos"])
+router = APIRouter(prefix="/productos", tags=["Productos"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=ProductOut)
 async def create_product(producto: ProductoCreate, db: AsyncSession = Depends(get_db)):
@@ -166,6 +167,7 @@ async def get_productos_filtrados(
     codigo: Optional[str] = Query(None),
     nombre: Optional[str] = Query(None),
     estatus: Optional[int] = Query(None),
+    codigo_externo: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -177,6 +179,8 @@ async def get_productos_filtrados(
             query = query.where(Productos.nombre.ilike(f"%{nombre}%"))
         if estatus:
             query = query.where(Productos.estatus == estatus)
+        if codigo_externo:
+            query = query.where(Productos.codigo_externo == codigo_externo)
 
         result = await db.execute(query)
         productos = result.scalars().all()

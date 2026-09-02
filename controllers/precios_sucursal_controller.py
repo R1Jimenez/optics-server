@@ -5,8 +5,9 @@ from database.database import get_db
 from models.precios_sucursal_model import PreciosSucursal, PrecioSucursalCreate, PrecioSucursalUpdate, PrecioSucursalOut
 from models.producto_model import Productos
 from models.sucursales_model import Sucursal
+from middleware.auth import get_current_user
 
-router = APIRouter(prefix="/precioporproducto", tags=["PrecioSucursal"])
+router = APIRouter(prefix="/precioporproducto", tags=["PrecioSucursal"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=PrecioSucursalOut)
 async def create_precio_sucursal(precsuc: PrecioSucursalCreate, db: AsyncSession = Depends(get_db)):
@@ -34,6 +35,12 @@ async def create_precio_sucursal(precsuc: PrecioSucursalCreate, db: AsyncSession
                 detail="Ya existe un precio establecido para este producto"
             )
 
+        if precsuc.precio <= precsuc.costo:
+            raise HTTPException(
+                status_code=400,
+                detail="El precio no puede ser menor o igual al costo"
+            )
+
         nuevo_precio = PreciosSucursal(
             sucursal=precsuc.sucursal,
             producto=precsuc.producto,
@@ -55,7 +62,11 @@ async def create_precio_sucursal(precsuc: PrecioSucursalCreate, db: AsyncSession
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 @router.get("/{producto_id}", response_model=list[PrecioSucursalOut])
-async def get_precios_producto(producto_id: int, db: AsyncSession = Depends(get_db)):
+async def get_precios_producto(
+    producto_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
     try:
         prodquery = select(PreciosSucursal).where(PreciosSucursal.producto == producto_id)
         result = await db.execute(prodquery)
@@ -66,6 +77,8 @@ async def get_precios_producto(producto_id: int, db: AsyncSession = Depends(get_
 
         return productoresult
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno en el servidor {e}")
 
@@ -100,6 +113,15 @@ async def update_precio_sucursal(
                     status_code=400,
                     detail="Ya existe un precio establecido para este producto en esta sucursal"
                 )
+
+        nuevo_costo = datos.costo if datos.costo is not None else precio.costo
+        nuevo_precio = datos.precio if datos.precio is not None else precio.precio
+
+        if nuevo_costo is not None and nuevo_precio <= nuevo_costo:
+            raise HTTPException(
+                status_code=400,
+                detail="El precio no puede ser menor o igual al costo"
+            )
 
         datos_actualizados = datos.model_dump(exclude_unset=True)
         for campo, valor in datos_actualizados.items():

@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.user_roles_model import UserRole, UserRoleCreate, UserRoleOut
 
-router = APIRouter(prefix="/users_roles", tags=["Users_Roles"])
+router = APIRouter(prefix="/users_roles", tags=["Users_Roles"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=UserRoleOut)
 async def create_user_role(user_role: UserRoleCreate, db: AsyncSession = Depends(get_db)):

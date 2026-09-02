@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from database.database import Base
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from models.sucursales_model import SucursalOut
 from models.user_roles_model import UserRoleOut
 
 class User(Base):
@@ -31,10 +30,10 @@ class UserSignUp (BaseModel):
     roles: list[int]
     password: str
 
-class UserLogin (BaseModel):
+class UserLogin(BaseModel):
     usuario: str
-    email: EmailStr
     password: str
+
 
 class UserUpdate (BaseModel):
     nombres: str | None = None
@@ -54,9 +53,15 @@ class UserOut (BaseModel):
     usuario: str
     email: EmailStr
     telefono: str
-    Sucursal: int
-    sucursal_acces: list[int]
+    Sucursal: str
+    sucursal_acces: list[str]
     roles: list[int]
 
     class Config:
         from_attributes = True
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut

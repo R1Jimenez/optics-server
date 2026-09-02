@@ -3,10 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
 from passlib.context import CryptContext
-from models.users_model import User, UserSignUp, UserUpdate, UserOut
+from models.users_model import User, UserSignUp, UserLogin, UserUpdate, UserOut, Token
 from sqlalchemy import any_
-from models.sucursales_model import Sucursal, SucursalCreate, SucursalUpdate, SucursalOut
-from models.user_roles_model import UserRole, UserRoleCreate, UserRoleOut
+from models.sucursales_model import Sucursal
+from models.user_roles_model import UserRole
+from middleware.auth import create_access_token, get_current_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -15,6 +16,34 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def hash_password(password: str) -> str:
     password = password[:72]  # bcrypt tiene límite de 72 bytes
     return pwd_context.hash(password)
+
+async def build_users_out(users: list[User], db: AsyncSession) -> list[UserOut]:
+    sucursal_ids = set()
+    for u in users:
+        sucursal_ids.add(int(u.Sucursal))
+        sucursal_ids.update(int(sid) for sid in (u.sucursal_acces or []))
+
+    sucursales_query = select(Sucursal).where(Sucursal.id.in_(sucursal_ids))
+    sucursales_result = await db.execute(sucursales_query)
+    sucursales_map = {s.id: s.sucursal for s in sucursales_result.scalars().all()}
+
+    return [
+        UserOut(
+            id=u.id,
+            nombres=u.nombres,
+            apellidos=u.apellidos,
+            usuario=u.usuario,
+            email=u.email,
+            telefono=u.telefono,
+            Sucursal=sucursales_map.get(int(u.Sucursal), ""),
+            sucursal_acces=[sucursales_map[int(sid)] for sid in u.sucursal_acces if int(sid) in sucursales_map],
+            roles=u.roles
+        )
+        for u in users
+    ]
+
+async def build_user_out(user: User, db: AsyncSession) -> UserOut:
+    return (await build_users_out([user], db))[0]
 
 @router.post("/signup", response_model=UserOut)
 async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
@@ -100,7 +129,7 @@ async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
         db.add(new_user)
         await db.commit()
         await db.refresh(new_user)
-        return new_user
+        return await build_user_out(new_user, db)
     
     except HTTPException:
         raise
@@ -111,8 +140,42 @@ async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
             status_code=500,
             detail="Error interno del servidor"
         )
+
+@router.post("/login", response_model=Token)
+async def user_login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
+    try:
+        query = select(User).where(User.usuario == credentials.usuario)
+        result = await db.execute(query)
+        user_result = result.scalar_one_or_none()
+
+        if not user_result or not pwd_context.verify(credentials.password, user_result.hashed_password):
+            raise HTTPException(
+                status_code=401,
+                detail="Usuario o contraseña incorrectos"
+            )
+
+        access_token = create_access_token(
+            data={
+                "sub": user_result.usuario,
+                "id": user_result.id,
+                "roles": user_result.roles,
+                "sucursal_acces": user_result.sucursal_acces,
+            }
+        )
+
+        user_out = await build_user_out(user_result, db)
+        return Token(access_token=access_token, user=user_out)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error al iniciar sesión: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno del servidor"
+        )
     
-@router.get("/all", response_model=list[UserOut])
+@router.get("/all", response_model=list[UserOut], dependencies=[Depends(get_current_user)])
 async def get_all_users(
     usuario: str | None = None,
     sucursal_id: int | None = None,
@@ -144,7 +207,7 @@ async def get_all_users(
         
         result = await db.execute(query)
         users = result.scalars().all()
-        return users
+        return await build_users_out(users, db)
     
     except Exception as e:
         print(f"Error al obtener usuarios: {e}")
@@ -153,7 +216,7 @@ async def get_all_users(
             detail="Error interno del servidor"
         )
     
-@router.get("/{user_id}", response_model=UserOut)
+@router.get("/{user_id}", response_model=UserOut, dependencies=[Depends(get_current_user)])
 async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
 
     try:
@@ -167,7 +230,7 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
                 detail = "Usuario no encontrado o inexistente"
             )
         
-        return user_result
+        return await build_user_out(user_result, db)
     
     except Exception as e:
         print(f"Error al obtener usuario: {e}")
@@ -176,7 +239,7 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
             detail="Error interno del servidor"
         )
     
-@router.post("/update/{user_id}", response_model=UserOut)
+@router.post("/update/{user_id}", response_model=UserOut, dependencies=[Depends(get_current_user)])
 async def update_user(user_id: int, user_update: UserUpdate, db: AsyncSession = Depends(get_db)):
 
     try:
@@ -227,7 +290,7 @@ async def update_user(user_id: int, user_update: UserUpdate, db: AsyncSession = 
         db.add(user_result)
         await db.commit()
         await db.refresh(user_result)
-        return user_result
+        return await build_user_out(user_result, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -238,7 +301,7 @@ async def update_user(user_id: int, user_update: UserUpdate, db: AsyncSession = 
             detail="Error interno del servidor"
         )
     
-@router.delete("/delete/{user_id}")
+@router.delete("/delete/{user_id}", dependencies=[Depends(get_current_user)])
 async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
 
     try:

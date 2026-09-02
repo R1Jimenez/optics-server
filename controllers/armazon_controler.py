@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.armazon_model import Armazon, ArmazonCreate, ArmazonUpdate, ArmazonOut
 
-router = APIRouter(prefix="/armazones", tags=["Armazones"])
+router = APIRouter(prefix="/armazones", tags=["Armazones"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=ArmazonOut)
 async def create_armazon(armazon: ArmazonCreate, db: AsyncSession = Depends(get_db)):

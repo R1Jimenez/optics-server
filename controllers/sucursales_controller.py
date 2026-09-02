@@ -2,11 +2,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
+from middleware.auth import get_current_user
 from models.sucursales_model import Sucursal, SucursalCreate, SucursalUpdate, SucursalOut
 from models.tipo_sucursal_model import tipoSucursal
 from models.estado_sucursal_model import Estado_Sucursal
 
-router = APIRouter(prefix="/sucursales", tags=["Sucursales"])
+router = APIRouter(prefix="/sucursales", tags=["Sucursales"], dependencies=[Depends(get_current_user)])
 
 @router.post("/create", response_model=SucursalOut)
 async def create_sucursal(sucursal: SucursalCreate, db: AsyncSession = Depends(get_db)):
