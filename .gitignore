@@ -1,0 +1,21 @@
+# Entornos
+venv/
+.venv/
+env/
+
+# Variables de entorno / secretos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Editores / OS
+.vscode/
+.idea/
+.DS_Store
