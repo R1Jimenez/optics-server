@@ -49,7 +49,6 @@ async def build_user_out(user: User, db: AsyncSession) -> UserOut:
 async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
 
     try:
-        # Verificar si el usuario ya existe
         existing_user = select(User).where(User.usuario == user.usuario)
         result = await db.execute(existing_user)
         user_exists = result.scalar_one_or_none()
@@ -195,15 +194,10 @@ async def get_all_users(
             )
         
         if sucursal_id:
-            # Filtrar usuarios que tengan acceso a esta sucursal
             query = query.where(sucursal_id == any_(User.sucursal_acces))
         
         if rol_id:
-            # Filtrar usuarios que tengan este rol
             query = query.where(rol_id == any_(User.roles))
-        
-        # Para filtrar activos necesitarías un campo is_active en el modelo
-        # o hacer join con user_roles para verificar si tienen roles activos
         
         result = await db.execute(query)
         users = result.scalars().all()

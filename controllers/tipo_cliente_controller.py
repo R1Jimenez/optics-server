@@ -21,7 +21,8 @@ async def create_tipo_cliente(tipo_cliente: TipoClienteCreate, db: AsyncSession 
             )
         
         new_tipo_cliente = Tipo_Cliente(
-            cliente = tipo_cliente.cliente
+            cliente = tipo_cliente.cliente,
+            porcentaje_descuento = tipo_cliente.porcentaje_descuento
         )
 
         db.add(new_tipo_cliente)
@@ -90,9 +91,9 @@ async def update_tipo_cliente(tipo_cliente_id: int, tipo_cliente_update: TipoCli
                 detail="Tipo de cliente no encontrado o inexistente"
             )
         
-        tipo_cliente.cliente = tipo_cliente_update.cliente
+        nuevo_cliente = tipo_cliente_update.cliente if tipo_cliente_update.cliente is not None else tipo_cliente.cliente
 
-        if not tipo_cliente.cliente:
+        if not nuevo_cliente:
             raise HTTPException(
                 status_code=400,
                 detail="El campo 'cliente' no puede estar vacío"
@@ -100,7 +101,7 @@ async def update_tipo_cliente(tipo_cliente_id: int, tipo_cliente_update: TipoCli
         
         # Validar que no exista otro registro con el mismo nombre (excluyendo el actual)
         existing_tipo = select(Tipo_Cliente).where(
-            Tipo_Cliente.cliente == tipo_cliente_update.cliente,
+            Tipo_Cliente.cliente == nuevo_cliente,
             Tipo_Cliente.id != tipo_cliente_id
         )
         result = await db.execute(existing_tipo)
@@ -110,6 +111,10 @@ async def update_tipo_cliente(tipo_cliente_id: int, tipo_cliente_update: TipoCli
                 status_code=400,
                 detail="Este tipo de cliente ya existe"
             )
+
+        datos_actualizados = tipo_cliente_update.model_dump(exclude_unset=True)
+        for campo, valor in datos_actualizados.items():
+            setattr(tipo_cliente, campo, valor)
 
         db.add(tipo_cliente)
         await db.commit()

@@ -10,16 +10,20 @@ class Tipo_Cliente(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     cliente = Column(String(100), nullable=False)
+    porcentaje_descuento = Column(Integer, nullable=False)
 
 class TipoClienteCreate(BaseModel):
     cliente: str
+    porcentaje_descuento: int
 
 class TipoClienteUpdate(BaseModel):
     cliente: str | None = None
+    porcentaje_descuento: int | None = None
 
 class TipoClienteOut(BaseModel):
     id: int
     cliente: str
+    porcentaje_descuento: int
 
     class Config:
         from_attributes = True
