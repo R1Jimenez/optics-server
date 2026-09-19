@@ -60,3 +60,14 @@ class InventarioMovimientoOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ProductoInventarioOut(BaseModel):
+    producto_id: int
+    codigo: str
+    nombre: str
+    descripcion: str
+    existencia_actual: int
+    punto_reorden: int
+
+    class Config:
+        from_attributes = True

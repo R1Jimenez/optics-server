@@ -7,6 +7,8 @@ from middleware.auth import get_current_user
 from models.producto_model import Productos, ProductoCreate, ProductoAtributo, ProductOut
 from models.atributos_model import Atributo
 from models.atributos_valores_model import AtributosValores
+from models.inventario_model import InventarioSucursal, ProductoInventarioOut
+from models.sucursales_model import Sucursal
 
 router = APIRouter(prefix="/productos", tags=["Productos"], dependencies=[Depends(get_current_user)])
 
@@ -222,6 +224,38 @@ async def get_productos_filtrados(
     except Exception as e:
         print(f"Error al obtener productos: {e}")
         raise HTTPException(status_code=500, detail="Error interno en el servidor")
+
+@router.get("/sucursal/{sucursal_id}", response_model=list[ProductoInventarioOut])
+async def get_productos_por_sucursal(sucursal_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        sucursal_result = await db.execute(select(Sucursal).where(Sucursal.id == sucursal_id))
+        if not sucursal_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+
+        query = select(InventarioSucursal, Productos).join(
+            Productos, Productos.id == InventarioSucursal.producto_id
+        ).where(InventarioSucursal.sucursal_id == sucursal_id)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        return [
+            ProductoInventarioOut(
+                producto_id=producto.id,
+                codigo=producto.codigo,
+                nombre=producto.nombre,
+                descripcion=producto.descripcion,
+                existencia_actual=inventario.existencia_actual,
+                punto_reorden=inventario.punto_reorden
+            )
+            for inventario, producto in rows
+        ]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error al obtener productos por sucursal: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 @router.get("/{producto_id}", response_model=ProductOut)
 async def get_producto(producto_id: int, db: AsyncSession = Depends(get_db)):

@@ -10,6 +10,7 @@ from models.inventario_model import InventarioSucursal, InventarioMovimiento
 from models.precios_sucursal_model import PreciosSucursal
 from models.clientes_model import Cliente
 from models.tipo_cliente_model import Tipo_Cliente
+from models.ordenes_trabajo_model import OrdenesTrabajo
 
 router = APIRouter(prefix="/cotizacion", tags=["Cotizaciones"], dependencies=[Depends(get_current_user)])
 
@@ -95,6 +96,7 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
             plazo=cotizacion.plazo,
             pago_inicial=cotizacion.pago_inicial,
             pago_restante=pago_restante,
+            promesa_entrega=cotizacion.promesa_entrega,
             total_normal=total_normal,
             total_venta=total_venta,
             detalles=detalles
@@ -102,6 +104,17 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
 
         db.add(nueva_cotizacion)
         db.add_all(movimientos)
+        await db.flush()
+
+        # cada venta (cotizacion) genera automaticamente su orden de trabajo
+        nueva_orden = OrdenesTrabajo(
+            sucursal_id=cotizacion.sucursal_id,
+            usuario_id=cotizacion.usuario_id,
+            id_cliente=cotizacion.id_cliente,
+            id_paciente=cotizacion.id_paciente,
+            id_cotizacion=nueva_cotizacion.id
+        )
+        db.add(nueva_orden)
         await db.commit()
 
         result = await db.execute(
@@ -282,6 +295,8 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
             cotizacion.tipo_venta = cotizacion_update.tipo_venta
         if cotizacion_update.plazo is not None:
             cotizacion.plazo = cotizacion_update.plazo
+        if cotizacion_update.promesa_entrega is not None:
+            cotizacion.promesa_entrega = cotizacion_update.promesa_entrega
 
         cotizacion.pago_inicial = pago_inicial
         cotizacion.pago_restante = pago_restante

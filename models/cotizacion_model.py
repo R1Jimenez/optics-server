@@ -19,6 +19,7 @@ class Cotizaciones(Base):
     pago_inicial = Column(Numeric(10, 2), nullable=False)
     pago_restante = Column(Numeric(10, 2), nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
+    promesa_entrega = Column(DateTime, nullable=True)
     total_normal = Column(Numeric(10, 2), nullable=False)
     total_venta = Column(Numeric(10, 2), nullable=False)
     active = Column(Boolean, default=True)
@@ -70,6 +71,7 @@ class CotizacionCreate(BaseModel):
     tipo_venta: int
     plazo: int
     pago_inicial: Decimal
+    promesa_entrega: datetime | None = None
     productos: list[CotizacionDetalleCreate]
 
 
@@ -81,6 +83,7 @@ class CotizacionUpdate(BaseModel):
     tipo_venta: int | None = None
     plazo: int | None = None
     pago_inicial: Decimal | None = None
+    promesa_entrega: datetime | None = None
     productos: list[CotizacionDetalleCreate] | None = None
 
 
@@ -95,6 +98,7 @@ class CotizacionOut(BaseModel):
     pago_inicial: Decimal
     pago_restante: Decimal
     fecha: datetime
+    promesa_entrega: datetime | None = None
     total_normal: Decimal
     total_venta: Decimal
     active: bool

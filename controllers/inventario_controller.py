@@ -4,7 +4,7 @@ from sqlalchemy import select
 from database.database import get_db
 from models.inventario_model import (
     InventarioSucursal, InventarioSucursalCreate, InventarioSucursalUpdate, InventarioSucursalOut,
-    InventarioMovimiento, InventarioMovimientoCreate, InventarioMovimientoOut
+    InventarioMovimiento, InventarioMovimientoCreate, InventarioMovimientoOut, ProductoInventarioOut
 )
 from models.producto_model import Productos
 from models.sucursales_model import Sucursal
@@ -43,6 +43,41 @@ async def create_inventario(inv: InventarioSucursalCreate, db: AsyncSession = De
         await db.rollback()
         print(f"Error al crear inventario: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+@router.get("/sucursal/{sucursal_id}/productos", response_model=list[ProductoInventarioOut])
+async def get_productos_por_sucursal(
+    sucursal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        sucursal_result = await db.execute(select(Sucursal).where(Sucursal.id == sucursal_id))
+        if not sucursal_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+
+        query = select(InventarioSucursal, Productos).join(
+            Productos, Productos.id == InventarioSucursal.producto_id
+        ).where(InventarioSucursal.sucursal_id == sucursal_id)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        return [
+            ProductoInventarioOut(
+                producto_id=producto.id,
+                codigo=producto.codigo,
+                nombre=producto.nombre,
+                descripcion=producto.descripcion,
+                existencia_actual=inventario.existencia_actual,
+                punto_reorden=inventario.punto_reorden
+            )
+            for inventario, producto in rows
+        ]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno en el servidor {e}")
 
 @router.get("/sucursal/{sucursal_id}/{producto_id}", response_model=InventarioSucursalOut)
 async def get_inventario_sucursal(
@@ -152,3 +187,5 @@ async def get_movimientos(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno en el servidor {e}")
+
+
