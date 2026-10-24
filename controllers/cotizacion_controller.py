@@ -1,3 +1,5 @@
+import re
+from datetime import datetime, timedelta
 from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +13,18 @@ from models.precios_sucursal_model import PreciosSucursal
 from models.clientes_model import Cliente
 from models.tipo_cliente_model import Tipo_Cliente
 from models.ordenes_trabajo_model import OrdenesTrabajo
+from models.plazo_model import Plazo
 
 router = APIRouter(prefix="/cotizacion", tags=["Cotizaciones"], dependencies=[Depends(get_current_user)])
+
+
+def _calcular_vencimiento(fecha_inicio: datetime, plazo_texto: str) -> datetime:
+    """Extrae el numero de semanas del texto del plazo (ej. '4 semanas') y lo suma a la fecha de inicio."""
+    match = re.search(r"\d+", plazo_texto)
+    if not match:
+        raise HTTPException(status_code=400, detail=f"No se pudo determinar el numero de semanas del plazo '{plazo_texto}'")
+    semanas = int(match.group())
+    return fecha_inicio + timedelta(weeks=semanas)
 
 
 @router.post('/create', response_model=CotizacionOut)
@@ -30,6 +42,11 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
         tipo_cliente = tipo_cliente_result.scalar_one_or_none()
         if not tipo_cliente:
             raise HTTPException(status_code=400, detail="El cliente no tiene un tipo de cliente valido asignado")
+
+        plazo_result = await db.execute(select(Plazo).where(Plazo.id == cotizacion.plazo))
+        plazo_obj = plazo_result.scalar_one_or_none()
+        if not plazo_obj:
+            raise HTTPException(status_code=404, detail="Plazo no encontrado")
 
         detalles = []
         movimientos = []
@@ -87,6 +104,8 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
         total_venta = total_normal - descuento
         pago_restante = total_venta - cotizacion.pago_inicial
 
+        fecha_actual = datetime.utcnow()
+
         nueva_cotizacion = Cotizaciones(
             sucursal_id=cotizacion.sucursal_id,
             usuario_id=cotizacion.usuario_id,
@@ -96,7 +115,9 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
             plazo=cotizacion.plazo,
             pago_inicial=cotizacion.pago_inicial,
             pago_restante=pago_restante,
+            fecha=fecha_actual,
             promesa_entrega=cotizacion.promesa_entrega,
+            vencimiento=_calcular_vencimiento(fecha_actual, plazo_obj.plazo),
             total_normal=total_normal,
             total_venta=total_venta,
             detalles=detalles
@@ -294,7 +315,12 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
         if cotizacion_update.tipo_venta is not None:
             cotizacion.tipo_venta = cotizacion_update.tipo_venta
         if cotizacion_update.plazo is not None:
+            plazo_result = await db.execute(select(Plazo).where(Plazo.id == cotizacion_update.plazo))
+            plazo_obj = plazo_result.scalar_one_or_none()
+            if not plazo_obj:
+                raise HTTPException(status_code=404, detail="Plazo no encontrado")
             cotizacion.plazo = cotizacion_update.plazo
+            cotizacion.vencimiento = _calcular_vencimiento(cotizacion.fecha, plazo_obj.plazo)
         if cotizacion_update.promesa_entrega is not None:
             cotizacion.promesa_entrega = cotizacion_update.promesa_entrega
 

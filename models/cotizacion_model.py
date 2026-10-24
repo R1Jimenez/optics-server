@@ -20,6 +20,7 @@ class Cotizaciones(Base):
     pago_restante = Column(Numeric(10, 2), nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
     promesa_entrega = Column(DateTime, nullable=True)
+    vencimiento = Column(DateTime, nullable=True)
     total_normal = Column(Numeric(10, 2), nullable=False)
     total_venta = Column(Numeric(10, 2), nullable=False)
     active = Column(Boolean, default=True)
@@ -99,6 +100,7 @@ class CotizacionOut(BaseModel):
     pago_restante: Decimal
     fecha: datetime
     promesa_entrega: datetime | None = None
+    vencimiento: datetime | None = None
     total_normal: Decimal
     total_venta: Decimal
     active: bool
