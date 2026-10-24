@@ -1,14 +1,21 @@
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from database.database import get_db
 from middleware.auth import get_current_user
-from models.cotizacion_model import Cotizaciones, CotizacionDetalle, CotizacionCreate, CotizacionUpdate, CotizacionOut
-from models.inventario_model import InventarioSucursal, InventarioMovimiento
+from models.abonos_model import Abonos
+from models.cotizacion_model import (
+    Cotizaciones, CotizacionDetalle, CotizacionCreate, CotizacionUpdate, CotizacionOut, CotizacionEnEsperaOut,
+    TicketsPaginaOut, TicketResumenOut, TicketOut, TicketItemOut
+)
+from models.inventario_model import (
+    InventarioSucursal, InventarioMovimiento,
+    TIPO_SALIDA_VENTA, TIPO_ENTRADA_MODIFICACION_VENTA, TIPO_ENTRADA_CANCELACION_VENTA
+)
 from models.precios_sucursal_model import PreciosSucursal
 from models.clientes_model import Cliente
 from models.tipo_cliente_model import Tipo_Cliente
@@ -27,8 +34,16 @@ def _calcular_vencimiento(fecha_inicio: datetime, plazo_texto: str) -> datetime:
     return fecha_inicio + timedelta(weeks=semanas)
 
 
+def _referencia_presupuesto(cotizacion_id: int) -> str:
+    return f"Presupuesto {cotizacion_id}"
+
+
 @router.post('/create', response_model=CotizacionOut)
-async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Depends(get_db)):
+async def create_cotizacion(
+    cotizacion: CotizacionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
     try:
         if not cotizacion.productos:
             raise HTTPException(status_code=400, detail="Debe incluir al menos un producto en la cotizacion")
@@ -97,7 +112,9 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
                 inventario_id=inventario.id,
                 entrada=0,
                 merma=item.cantidad,
-                existencia_final=existencia_final
+                existencia_final=existencia_final,
+                tipo=TIPO_SALIDA_VENTA,
+                usuario_id=current_user["id"]
             ))
 
         descuento = total_normal * Decimal(tipo_cliente.porcentaje_descuento) / Decimal("100")
@@ -126,6 +143,9 @@ async def create_cotizacion(cotizacion: CotizacionCreate, db: AsyncSession = Dep
         db.add(nueva_cotizacion)
         db.add_all(movimientos)
         await db.flush()
+
+        for movimiento in movimientos:
+            movimiento.referencia = _referencia_presupuesto(nueva_cotizacion.id)
 
         # cada venta (cotizacion) genera automaticamente su orden de trabajo
         nueva_orden = OrdenesTrabajo(
@@ -156,6 +176,138 @@ async def get_all_cotizaciones(db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(
             select(Cotizaciones).options(selectinload(Cotizaciones.detalles))
+        )
+        return result.scalars().all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {e}")
+
+
+def _a_utc_naive(fecha: datetime) -> datetime:
+    # las fechas se guardan en UTC sin zona horaria
+    if fecha.tzinfo is None:
+        return fecha
+    return fecha.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+@router.get('/tickets', response_model=TicketsPaginaOut)
+async def listar_tickets(
+    folio: int | None = Query(None),
+    id_cliente: int | None = Query(None),
+    desde: datetime | None = Query(None),
+    hasta: datetime | None = Query(None),
+    pagina: int = Query(1, ge=1),
+    por_pagina: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        query = select(Cotizaciones, Cliente).join(Cliente, Cliente.id == Cotizaciones.id_cliente)
+        if folio is not None:
+            query = query.where(Cotizaciones.id == folio)
+        if id_cliente is not None:
+            query = query.where(Cotizaciones.id_cliente == id_cliente)
+        if desde is not None:
+            query = query.where(Cotizaciones.fecha >= _a_utc_naive(desde))
+        if hasta is not None:
+            query = query.where(Cotizaciones.fecha < _a_utc_naive(hasta))
+
+        total = await db.scalar(select(func.count()).select_from(query.subquery()))
+        result = await db.execute(
+            query.order_by(Cotizaciones.fecha.desc(), Cotizaciones.id.desc())
+            .offset((pagina - 1) * por_pagina)
+            .limit(por_pagina)
+        )
+
+        items = [
+            TicketResumenOut(
+                id=cotizacion.id,
+                fecha=cotizacion.fecha,
+                cliente=f"{cliente.nombres} {cliente.apellidos}",
+                importe=cotizacion.total_venta
+            )
+            for cotizacion, cliente in result.all()
+        ]
+        return TicketsPaginaOut(total=total, pagina=pagina, por_pagina=por_pagina, items=items)
+    except Exception as e:
+        print(f"Error al listar tickets: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get('/ticket/{cotizacion_id}', response_model=TicketOut)
+async def get_ticket(cotizacion_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(
+            select(Cotizaciones)
+            .options(
+                selectinload(Cotizaciones.sucursal),
+                selectinload(Cotizaciones.usuario),
+                selectinload(Cotizaciones.cliente),
+                selectinload(Cotizaciones.paciente),
+                selectinload(Cotizaciones.plazo_rel),
+                selectinload(Cotizaciones.detalles).selectinload(CotizacionDetalle.producto),
+            )
+            .where(Cotizaciones.id == cotizacion_id)
+        )
+        cotizacion = result.scalar_one_or_none()
+        if not cotizacion:
+            raise HTTPException(status_code=404, detail="Cotizacion no encontrada")
+
+        cliente = cotizacion.cliente
+        tipo_cliente = None
+        if cliente.tipocliente is not None:
+            tipo_result = await db.execute(select(Tipo_Cliente).where(Tipo_Cliente.id == cliente.tipocliente))
+            tipo_cliente = tipo_result.scalar_one_or_none()
+
+        # se deriva de los totales guardados para que coincida con el ticket original aunque cambie el tipo de cliente
+        descuento_pct = (
+            (cotizacion.total_normal - cotizacion.total_venta) * 100 / cotizacion.total_normal
+            if cotizacion.total_normal else Decimal("0")
+        )
+
+        return TicketOut(
+            folio=cotizacion.id,
+            fecha=cotizacion.fecha,
+            sucursal=cotizacion.sucursal.sucursal if cotizacion.sucursal else "N/A",
+            vendedor=f"{cotizacion.usuario.nombres} {cotizacion.usuario.apellidos}" if cotizacion.usuario else "N/A",
+            cliente_nombre=f"{cliente.nombres} {cliente.apellidos}",
+            cliente_direccion=f"{cliente.calle} {cliente.numero}, {cliente.colonia}, {cliente.ciudad}, {cliente.estado}, CP {cliente.codigopostal}",
+            cliente_telefono=cliente.telefono,
+            tipo_cliente=tipo_cliente.cliente if tipo_cliente else None,
+            paciente=f"{cotizacion.paciente.nombres} {cotizacion.paciente.apellidos}" if cotizacion.paciente else None,
+            plazo=cotizacion.plazo_rel.plazo if cotizacion.plazo_rel else None,
+            items=[
+                TicketItemOut(
+                    cantidad=d.cantidad,
+                    nombre=d.producto.nombre if d.producto else f"Producto #{d.producto_id}",
+                    precio_unitario=d.precio_unitario
+                )
+                for d in cotizacion.detalles
+            ],
+            total_normal=cotizacion.total_normal,
+            total_venta=cotizacion.total_venta,
+            descuento_porcentaje=round(descuento_pct, 2),
+            pago_inicial=cotizacion.pago_inicial,
+            pago_restante=cotizacion.total_venta - cotizacion.pago_inicial,
+            promesa_entrega=cotizacion.promesa_entrega
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error al obtener ticket: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.get('/en-espera/{sucursal_id}', response_model=list[CotizacionEnEsperaOut])
+async def get_cotizaciones_en_espera(sucursal_id: int, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(
+            select(Cotizaciones)
+            .options(selectinload(Cotizaciones.cliente))
+            .where(
+                Cotizaciones.sucursal_id == sucursal_id,
+                Cotizaciones.active.is_(True),
+                Cotizaciones.pago_restante > 0
+            )
+            .order_by(Cotizaciones.fecha.desc())
         )
         return result.scalars().all()
     except Exception as e:
@@ -194,7 +346,12 @@ async def get_cotizacion(cotizacion_id: int, db: AsyncSession = Depends(get_db))
 
 
 @router.put('/update/{cotizacion_id}', response_model=CotizacionOut)
-async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpdate, db: AsyncSession = Depends(get_db)):
+async def update_cotizacion(
+    cotizacion_id: int,
+    cotizacion_update: CotizacionUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
     try:
         result = await db.execute(
             select(Cotizaciones)
@@ -240,7 +397,10 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
                         inventario_id=inventario.id,
                         entrada=detalle.cantidad,
                         merma=0,
-                        existencia_final=existencia_final
+                        existencia_final=existencia_final,
+                        tipo=TIPO_ENTRADA_MODIFICACION_VENTA,
+                        referencia=_referencia_presupuesto(cotizacion.id),
+                        usuario_id=current_user["id"]
                     ))
 
             cotizacion.detalles.clear()
@@ -292,7 +452,10 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
                     inventario_id=inventario.id,
                     entrada=0,
                     merma=item.cantidad,
-                    existencia_final=existencia_final
+                    existencia_final=existencia_final,
+                    tipo=TIPO_SALIDA_VENTA,
+                    referencia=_referencia_presupuesto(cotizacion.id),
+                    usuario_id=current_user["id"]
                 ))
 
             cotizacion.detalles = detalles
@@ -302,7 +465,12 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
         descuento = total_normal * Decimal(tipo_cliente.porcentaje_descuento) / Decimal("100")
         total_venta = total_normal - descuento
         pago_inicial = cotizacion_update.pago_inicial if cotizacion_update.pago_inicial is not None else cotizacion.pago_inicial
-        pago_restante = total_venta - pago_inicial
+        abonado_result = await db.execute(
+            select(func.coalesce(func.sum(Abonos.monto), 0)).where(Abonos.cotizacion_id == cotizacion.id)
+        )
+        pago_restante = total_venta - pago_inicial - Decimal(abonado_result.scalar_one())
+        if pago_restante < 0:
+            raise HTTPException(status_code=400, detail="El total de la venta no puede ser menor a lo ya pagado")
 
         if cotizacion_update.sucursal_id is not None:
             cotizacion.sucursal_id = cotizacion_update.sucursal_id
@@ -347,7 +515,11 @@ async def update_cotizacion(cotizacion_id: int, cotizacion_update: CotizacionUpd
 
 
 @router.delete('/delete/{cotizacion_id}')
-async def delete_cotizacion(cotizacion_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_cotizacion(
+    cotizacion_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
     try:
         result = await db.execute(
             select(Cotizaciones)
@@ -357,6 +529,10 @@ async def delete_cotizacion(cotizacion_id: int, db: AsyncSession = Depends(get_d
         cotizacion = result.scalar_one_or_none()
         if not cotizacion:
             raise HTTPException(status_code=404, detail="Cotizacion no encontrada")
+
+        abonos_result = await db.execute(select(Abonos.id).where(Abonos.cotizacion_id == cotizacion_id).limit(1))
+        if abonos_result.first():
+            raise HTTPException(status_code=400, detail="No se puede eliminar una cotizacion que ya tiene abonos registrados")
 
         # restaurar la existencia de los productos antes de eliminar la cotizacion
         movimientos = []
@@ -375,7 +551,10 @@ async def delete_cotizacion(cotizacion_id: int, db: AsyncSession = Depends(get_d
                     inventario_id=inventario.id,
                     entrada=detalle.cantidad,
                     merma=0,
-                    existencia_final=existencia_final
+                    existencia_final=existencia_final,
+                    tipo=TIPO_ENTRADA_CANCELACION_VENTA,
+                    referencia=_referencia_presupuesto(cotizacion.id),
+                    usuario_id=current_user["id"]
                 ))
 
         db.add_all(movimientos)

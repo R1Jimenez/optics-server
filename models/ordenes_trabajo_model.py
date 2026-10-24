@@ -89,6 +89,7 @@ class OrdenTrabajoProductoOut(BaseModel):
 
 class OrdenTrabajoOut(BaseModel):
     id: int
+    id_cotizacion: int | None = None
     sucursal: OrdenTrabajoSucursalOut
     cliente: OrdenTrabajoClienteOut
     usuario: OrdenTrabajoUsuarioOut

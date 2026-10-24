@@ -4,6 +4,7 @@ from database.database import Base
 from pydantic import BaseModel
 from decimal import Decimal
 from datetime import datetime
+from models.clientes_model import ClienteOut
 
 
 class Cotizaciones(Base):
@@ -108,3 +109,53 @@ class CotizacionOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CotizacionEnEsperaOut(BaseModel):
+    id: int
+    fecha: datetime
+    cliente: ClienteOut
+
+    class Config:
+        from_attributes = True
+
+
+class TicketResumenOut(BaseModel):
+    id: int
+    fecha: datetime
+    cliente: str
+    importe: Decimal
+
+
+class TicketsPaginaOut(BaseModel):
+    total: int
+    pagina: int
+    por_pagina: int
+    items: list[TicketResumenOut]
+
+
+class TicketItemOut(BaseModel):
+    cantidad: int
+    nombre: str
+    precio_unitario: Decimal
+
+
+class TicketOut(BaseModel):
+    """Datos necesarios para reimprimir el ticket de una venta tal como se emitio."""
+    folio: int
+    fecha: datetime
+    sucursal: str
+    vendedor: str
+    cliente_nombre: str
+    cliente_direccion: str
+    cliente_telefono: str
+    tipo_cliente: str | None = None
+    paciente: str | None = None
+    plazo: str | None = None
+    items: list[TicketItemOut]
+    total_normal: Decimal
+    total_venta: Decimal
+    descuento_porcentaje: Decimal
+    pago_inicial: Decimal
+    pago_restante: Decimal
+    promesa_entrega: datetime | None = None

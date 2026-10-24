@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -54,6 +54,7 @@ async def _build_orden_trabajo_out(orden: OrdenesTrabajo, db: AsyncSession) -> O
 
     return OrdenTrabajoOut(
         id=orden.id,
+        id_cotizacion=orden.id_cotizacion,
         sucursal=OrdenTrabajoSucursalOut.model_validate(orden.sucursal),
         cliente=OrdenTrabajoClienteOut.model_validate(orden.cliente),
         usuario=OrdenTrabajoUsuarioOut.model_validate(orden.usuario),
@@ -106,9 +107,26 @@ async def create_orden_trabajo(orden: OrdenTrabajoCreate, db: AsyncSession = Dep
 
 
 @router.get('/all', response_model=list[OrdenTrabajoOut])
-async def get_all_ordenes_trabajo(db: AsyncSession = Depends(get_db)):
+async def get_all_ordenes_trabajo(
+    orden_id: int | None = Query(None),
+    id_cotizacion: int | None = Query(None),
+    id_cliente: int | None = Query(None),
+    sucursal_id: int | None = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        result = await db.execute(select(OrdenesTrabajo).options(*_ORDEN_RELATIONS))
+        # sin cotizacion no hay detalle que mostrar (ver _build_orden_trabajo_out)
+        query = select(OrdenesTrabajo).options(*_ORDEN_RELATIONS).where(OrdenesTrabajo.id_cotizacion.isnot(None))
+        if orden_id is not None:
+            query = query.where(OrdenesTrabajo.id == orden_id)
+        if id_cotizacion is not None:
+            query = query.where(OrdenesTrabajo.id_cotizacion == id_cotizacion)
+        if id_cliente is not None:
+            query = query.where(OrdenesTrabajo.id_cliente == id_cliente)
+        if sucursal_id is not None:
+            query = query.where(OrdenesTrabajo.sucursal_id == sucursal_id)
+
+        result = await db.execute(query.order_by(OrdenesTrabajo.id.desc()))
         return [await _build_orden_trabajo_out(orden, db) for orden in result.scalars().all()]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno del servidor: {e}")
