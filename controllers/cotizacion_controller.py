@@ -21,6 +21,11 @@ from models.clientes_model import Cliente
 from models.tipo_cliente_model import Tipo_Cliente
 from models.ordenes_trabajo_model import OrdenesTrabajo
 from models.plazo_model import Plazo
+from models.producto_model import ProductoAtributo
+from models.promociones_model import Promociones
+from controllers.promociones_controller import (
+    obtener_promocion_aplicable, cargar_promocion, condiciones_por_categoria, producto_elegible, porcentaje_descuento
+)
 
 router = APIRouter(prefix="/cotizacion", tags=["Cotizaciones"], dependencies=[Depends(get_current_user)])
 
@@ -36,6 +41,31 @@ def _calcular_vencimiento(fecha_inicio: datetime, plazo_texto: str) -> datetime:
 
 def _referencia_presupuesto(cotizacion_id: int) -> str:
     return f"Presupuesto {cotizacion_id}"
+
+
+async def _aplicar_descuentos(db: AsyncSession, detalles, pct_cliente, promocion, cond) -> Decimal:
+    """Asigna descuento_porcentaje a cada renglon (tipo de cliente + promocion) y devuelve el total de la venta."""
+    valores: dict[int, set[int]] = {}
+    if cond and cond["atributos_valores"]:
+        filas = await db.execute(
+            select(ProductoAtributo.producto_id, ProductoAtributo.atributovalor_id)
+            .where(ProductoAtributo.producto_id.in_({d.producto_id for d in detalles}))
+        )
+        for producto_id, valor_id in filas.all():
+            valores.setdefault(producto_id, set()).add(valor_id)
+
+    total = Decimal("0")
+    for d in detalles:
+        elegible = bool(cond) and producto_elegible(cond, d.producto_id, valores.get(d.producto_id, set()))
+        pct = porcentaje_descuento(
+            pct_cliente,
+            promocion.descuento if promocion else None,
+            bool(promocion and promocion.acumulativa),
+            elegible
+        )
+        d.descuento_porcentaje = pct
+        total += Decimal(d.subtotal) * (Decimal("100") - pct) / Decimal("100")
+    return total.quantize(Decimal("0.01"))
 
 
 @router.post('/create', response_model=CotizacionOut)
@@ -62,6 +92,13 @@ async def create_cotizacion(
         plazo_obj = plazo_result.scalar_one_or_none()
         if not plazo_obj:
             raise HTTPException(status_code=404, detail="Plazo no encontrado")
+
+        promocion = cond = None
+        if cotizacion.promocion_id is not None:
+            promocion, cond = await obtener_promocion_aplicable(
+                db, cotizacion.promocion_id, cotizacion.sucursal_id, cotizacion.tipo_venta,
+                cotizacion.plazo, cotizacion.id_cliente
+            )
 
         detalles = []
         movimientos = []
@@ -117,8 +154,7 @@ async def create_cotizacion(
                 usuario_id=current_user["id"]
             ))
 
-        descuento = total_normal * Decimal(tipo_cliente.porcentaje_descuento) / Decimal("100")
-        total_venta = total_normal - descuento
+        total_venta = await _aplicar_descuentos(db, detalles, tipo_cliente.porcentaje_descuento, promocion, cond)
         pago_restante = total_venta - cotizacion.pago_inicial
 
         fecha_actual = datetime.utcnow()
@@ -130,6 +166,7 @@ async def create_cotizacion(
             id_paciente=cotizacion.id_paciente,
             tipo_venta=cotizacion.tipo_venta,
             plazo=cotizacion.plazo,
+            promocion_id=cotizacion.promocion_id,
             pago_inicial=cotizacion.pago_inicial,
             pago_restante=pago_restante,
             fecha=fecha_actual,
@@ -262,6 +299,9 @@ async def get_ticket(cotizacion_id: int, db: AsyncSession = Depends(get_db)):
             (cotizacion.total_normal - cotizacion.total_venta) * 100 / cotizacion.total_normal
             if cotizacion.total_normal else Decimal("0")
         )
+        promocion_nombre = None
+        if cotizacion.promocion_id is not None:
+            promocion_nombre = await db.scalar(select(Promociones.nombre).where(Promociones.id == cotizacion.promocion_id))
 
         return TicketOut(
             folio=cotizacion.id,
@@ -274,11 +314,14 @@ async def get_ticket(cotizacion_id: int, db: AsyncSession = Depends(get_db)):
             tipo_cliente=tipo_cliente.cliente if tipo_cliente else None,
             paciente=f"{cotizacion.paciente.nombres} {cotizacion.paciente.apellidos}" if cotizacion.paciente else None,
             plazo=cotizacion.plazo_rel.plazo if cotizacion.plazo_rel else None,
+            promocion=promocion_nombre,
             items=[
                 TicketItemOut(
                     cantidad=d.cantidad,
                     nombre=d.producto.nombre if d.producto else f"Producto #{d.producto_id}",
-                    precio_unitario=d.precio_unitario
+                    precio_unitario=d.precio_unitario,
+                    # ventas anteriores a las promociones no guardan descuento por renglon
+                    descuento_porcentaje=d.descuento_porcentaje if d.descuento_porcentaje is not None else round(descuento_pct, 2)
                 )
                 for d in cotizacion.detalles
             ],
@@ -461,9 +504,14 @@ async def update_cotizacion(
             cotizacion.detalles = detalles
         else:
             total_normal = cotizacion.total_normal
+            detalles = list(cotizacion.detalles)
 
-        descuento = total_normal * Decimal(tipo_cliente.porcentaje_descuento) / Decimal("100")
-        total_venta = total_normal - descuento
+        promocion = cond = None
+        if cotizacion.promocion_id is not None:
+            # la promocion se valido al vender; al modificar solo se vuelve a aplicar
+            promocion = await cargar_promocion(db, cotizacion.promocion_id)
+            cond = condiciones_por_categoria(promocion)
+        total_venta = await _aplicar_descuentos(db, detalles, tipo_cliente.porcentaje_descuento, promocion, cond)
         pago_inicial = cotizacion_update.pago_inicial if cotizacion_update.pago_inicial is not None else cotizacion.pago_inicial
         abonado_result = await db.execute(
             select(func.coalesce(func.sum(Abonos.monto), 0)).where(Abonos.cotizacion_id == cotizacion.id)

@@ -25,6 +25,7 @@ class Cotizaciones(Base):
     total_normal = Column(Numeric(10, 2), nullable=False)
     total_venta = Column(Numeric(10, 2), nullable=False)
     active = Column(Boolean, default=True)
+    promocion_id = Column(Integer, ForeignKey("promociones.id"), nullable=True)
 
     sucursal = relationship("Sucursal", backref="cotizaciones")
     usuario = relationship("User", backref="cotizaciones")
@@ -45,6 +46,8 @@ class CotizacionDetalle(Base):
     cantidad = Column(Integer, nullable=False, default=1)
     precio_unitario = Column(Numeric(10, 2), nullable=False)
     subtotal = Column(Numeric(10, 2), nullable=False)
+    # descuento total aplicado al renglon (tipo de cliente y/o promocion); null en ventas anteriores a promociones
+    descuento_porcentaje = Column(Numeric(5, 2), nullable=True)
 
     producto = relationship("Productos")
 
@@ -60,6 +63,7 @@ class CotizacionDetalleOut(BaseModel):
     cantidad: int
     precio_unitario: Decimal
     subtotal: Decimal
+    descuento_porcentaje: Decimal | None = None
 
     class Config:
         from_attributes = True
@@ -75,6 +79,7 @@ class CotizacionCreate(BaseModel):
     pago_inicial: Decimal
     promesa_entrega: datetime | None = None
     productos: list[CotizacionDetalleCreate]
+    promocion_id: int | None = None
 
 
 class CotizacionUpdate(BaseModel):
@@ -105,6 +110,7 @@ class CotizacionOut(BaseModel):
     total_normal: Decimal
     total_venta: Decimal
     active: bool
+    promocion_id: int | None = None
     detalles: list[CotizacionDetalleOut]
 
     class Config:
@@ -138,6 +144,7 @@ class TicketItemOut(BaseModel):
     cantidad: int
     nombre: str
     precio_unitario: Decimal
+    descuento_porcentaje: Decimal
 
 
 class TicketOut(BaseModel):
@@ -152,6 +159,7 @@ class TicketOut(BaseModel):
     tipo_cliente: str | None = None
     paciente: str | None = None
     plazo: str | None = None
+    promocion: str | None = None
     items: list[TicketItemOut]
     total_normal: Decimal
     total_venta: Decimal

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query, Depends 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from database.database import get_db
 from middleware.auth import get_current_user
 from models.producto_model import Productos, ProductoCreate, ProductoAtributo, ProductOut
@@ -224,6 +225,40 @@ async def get_productos_filtrados(
     except Exception as e:
         print(f"Error al obtener productos: {e}")
         raise HTTPException(status_code=500, detail="Error interno en el servidor")
+
+class ProductoBusquedaGeneralOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    codigo_externo: str
+
+
+@router.get("/buscar", response_model=list[ProductoBusquedaGeneralOut])
+async def buscar_productos(
+    q: str = Query(..., min_length=1),
+    limite: int = Query(15, ge=1, le=50),
+    db: AsyncSession = Depends(get_db)
+):
+    """Busqueda en todo el catalogo por codigo, nombre o codigo externo."""
+    try:
+        patron = f"%{q.strip()}%"
+        result = await db.execute(
+            select(Productos)
+            .where(or_(
+                Productos.codigo.ilike(patron),
+                Productos.nombre.ilike(patron),
+                Productos.codigo_externo.ilike(patron)
+            ))
+            .order_by(Productos.nombre)
+            .limit(limite)
+        )
+        return [
+            ProductoBusquedaGeneralOut(id=p.id, codigo=p.codigo, nombre=p.nombre, codigo_externo=p.codigo_externo)
+            for p in result.scalars().all()
+        ]
+    except Exception as e:
+        print(f"Error al buscar productos: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 @router.get("/sucursal/{sucursal_id}", response_model=list[ProductoInventarioOut])
 async def get_productos_por_sucursal(sucursal_id: int, db: AsyncSession = Depends(get_db)):
