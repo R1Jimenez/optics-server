@@ -8,6 +8,8 @@ from sqlalchemy import any_
 from models.sucursales_model import Sucursal
 from models.user_roles_model import UserRole
 from middleware.auth import create_access_token, get_current_user
+from models.conexiones_model import TIPO_ENTRADA
+from controllers.conexiones_controller import registrar_conexion
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -163,6 +165,14 @@ async def user_login(credentials: UserLogin, db: AsyncSession = Depends(get_db))
         )
 
         user_out = await build_user_out(user_result, db)
+
+        # una falla al registrar el historial no debe impedir el acceso
+        try:
+            await registrar_conexion(db, user_result, TIPO_ENTRADA)
+        except Exception as e:
+            await db.rollback()
+            print(f"Error al registrar la conexión de {user_out.usuario}: {e}")
+
         return Token(access_token=access_token, user=user_out)
 
     except HTTPException:

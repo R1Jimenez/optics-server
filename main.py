@@ -13,7 +13,8 @@ from controllers import (cotizacion_controller, users_controller, estado_sucursa
                          colorlente_controller, rangolente_controller, atributos_controller,
                          atributos_valores_controller, precios_sucursal_controller, inventario_controller,
                          exploraciones_controller, info_referencial_controller, ordenes_trabajo_controller,
-                         abonos_controller, traspasos_controller, promociones_controller)
+                         abonos_controller, traspasos_controller, promociones_controller,
+                         conexiones_controller)
 
 app = FastAPI()
 
@@ -88,6 +89,7 @@ app.include_router(ordenes_trabajo_controller.router)
 app.include_router(abonos_controller.router)
 app.include_router(traspasos_controller.router)
 app.include_router(promociones_controller.router)
+app.include_router(conexiones_controller.router)
 @app.get("/")
 async def root():
     return {"message": "FastAPI + PostgresSQL funcionan!"}

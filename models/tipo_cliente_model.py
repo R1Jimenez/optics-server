@@ -1,8 +1,10 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String
 from database.database import Base
-from pydantic import BaseModel, EmailStr
-from datetime import datetime
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated
+
+NombreTipo = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+Porcentaje = Annotated[int, Field(ge=0, le=100)]
 
 class Tipo_Cliente(Base):
 
@@ -13,17 +15,19 @@ class Tipo_Cliente(Base):
     porcentaje_descuento = Column(Integer, nullable=False)
 
 class TipoClienteCreate(BaseModel):
-    cliente: str
-    porcentaje_descuento: int
+    cliente: NombreTipo
+    porcentaje_descuento: Porcentaje
 
 class TipoClienteUpdate(BaseModel):
-    cliente: str | None = None
-    porcentaje_descuento: int | None = None
+    cliente: NombreTipo | None = None
+    porcentaje_descuento: Porcentaje | None = None
 
 class TipoClienteOut(BaseModel):
     id: int
     cliente: str
     porcentaje_descuento: int
+    # solo lo llena /all: clientes asignados a este tipo
+    clientes: int | None = None
 
     class Config:
         from_attributes = True
