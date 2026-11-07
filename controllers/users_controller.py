@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.database import get_db
@@ -77,12 +78,11 @@ async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
                 detail="Debe proporcionar al menos un rol de usuario"
             )
         
+        roles_existentes = set((await db.execute(
+            select(UserRole.id).where(UserRole.id.in_(user.roles))
+        )).scalars().all())
         for role_id in user.roles:
-            role_query = select(UserRole).where(UserRole.id == role_id)
-            role_result = await db.execute(role_query)
-            role_exists = role_result.scalar_one_or_none()
-            
-            if not role_exists:
+            if role_id not in roles_existentes:
                 raise HTTPException(
                     status_code=400,
                     detail=f"El rol con ID {role_id} no existe"
@@ -104,16 +104,14 @@ async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
                 detail = "Debe proporcionar al menos una sucursal de acceso"
             )
         
-        for suc in user.sucursal_acces:
-            sucursal_query = select(Sucursal).where(Sucursal.id == suc)
-            sucursal_result = await db.execute(sucursal_query)
-            sucursal_exists = sucursal_result.scalar_one_or_none()
-            
-            if not sucursal_exists:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Una de las sucursales de acceso seleccionada no existe"
-                )
+        sucursales_existentes = set((await db.execute(
+            select(Sucursal.id).where(Sucursal.id.in_(user.sucursal_acces))
+        )).scalars().all())
+        if any(suc not in sucursales_existentes for suc in user.sucursal_acces):
+            raise HTTPException(
+                status_code=400,
+                detail="Una de las sucursales de acceso seleccionada no existe"
+            )
         
         new_user = User (
             nombres = user.nombres,
@@ -124,7 +122,7 @@ async def user_signup(user: UserSignUp, db: AsyncSession = Depends(get_db)):
             Sucursal = user.Sucursal,
             sucursal_acces = user.sucursal_acces,
             roles = user.roles,
-            hashed_password = hash_password(user.password)
+            hashed_password = await run_in_threadpool(hash_password, user.password)
         )
 
         db.add(new_user)
@@ -149,7 +147,11 @@ async def user_login(credentials: UserLogin, db: AsyncSession = Depends(get_db))
         result = await db.execute(query)
         user_result = result.scalar_one_or_none()
 
-        if not user_result or not pwd_context.verify(credentials.password, user_result.hashed_password):
+        # bcrypt es costoso a proposito: fuera del event loop para no frenar otras peticiones
+        valido = bool(user_result) and await run_in_threadpool(
+            pwd_context.verify, credentials.password, user_result.hashed_password
+        )
+        if not valido:
             raise HTTPException(
                 status_code=401,
                 detail="Usuario o contraseña incorrectos"
@@ -287,7 +289,7 @@ async def update_user(user_id: int, user_update: UserUpdate, db: AsyncSession = 
 
         for key, value in update_data.items():
             if key == "password":
-                setattr(user_result, "hashed_password", hash_password(value))
+                setattr(user_result, "hashed_password", await run_in_threadpool(hash_password, value))
             else:
                 setattr(user_result, key, value)
 

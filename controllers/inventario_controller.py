@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, or_
 from database.database import get_db
+from database.paginacion import paginar
 from models.inventario_model import (
     InventarioSucursal, InventarioSucursalCreate, InventarioSucursalUpdate, InventarioSucursalOut,
     InventarioMovimiento, InventarioMovimientoCreate, InventarioMovimientoOut, ProductoInventarioOut,
@@ -82,12 +83,8 @@ async def listar_movimientos(
         if hasta is not None:
             query = query.where(InventarioMovimiento.fecha < _a_utc_naive(hasta))
 
-        total = await db.scalar(select(func.count()).select_from(query.subquery()))
-
-        result = await db.execute(
-            query.order_by(InventarioMovimiento.fecha.desc(), InventarioMovimiento.id.desc())
-            .offset((pagina - 1) * por_pagina)
-            .limit(por_pagina)
+        total, filas = await paginar(
+            db, query, (InventarioMovimiento.fecha.desc(), InventarioMovimiento.id.desc()), pagina, por_pagina
         )
 
         items = [
@@ -107,7 +104,7 @@ async def listar_movimientos(
                 salidas=mov.merma,
                 saldo=mov.existencia_final
             )
-            for mov, _inv, prod, sucursal, usuario, tipo_mov in result.all()
+            for mov, _inv, prod, sucursal, usuario, tipo_mov in filas
         ]
 
         return MovimientosPaginaOut(total=total, pagina=pagina, por_pagina=por_pagina, items=items)

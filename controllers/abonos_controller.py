@@ -10,6 +10,7 @@ from models.abonos_model import (
     TIPO_PAGO, TIPO_INCOBRABLE
 )
 from models.cotizacion_model import Cotizaciones, CotizacionDetalle
+from controllers.pagos_controller import con_saldo
 
 router = APIRouter(prefix="/abonos", tags=["Abonos"], dependencies=[Depends(get_current_user)])
 
@@ -34,11 +35,7 @@ async def get_cuentas_por_cobrar(id_cliente: int, db: AsyncSession = Depends(get
                 selectinload(Cotizaciones.tipo_venta_rel),
                 selectinload(Cotizaciones.detalles).selectinload(CotizacionDetalle.producto),
             )
-            .where(
-                Cotizaciones.id_cliente == id_cliente,
-                Cotizaciones.active.is_(True),
-                Cotizaciones.pago_restante > 0
-            )
+            .where(Cotizaciones.id_cliente == id_cliente, *con_saldo(es_credito=True))
             .order_by(Cotizaciones.vencimiento.asc().nulls_last(), Cotizaciones.id.asc())
         )
         cotizaciones = result.scalars().all()

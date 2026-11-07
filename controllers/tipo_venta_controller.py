@@ -16,7 +16,7 @@ async def create_tipo_venta(tipo_venta: TipoVentaCreate, db: AsyncSession = Depe
         if existing_tipo_venta:
             raise HTTPException(status_code=400, detail="Este tipo de venta ya existe")
         
-        new_tipo_venta = TipoVenta(venta=tipo_venta.venta)
+        new_tipo_venta = TipoVenta(venta=tipo_venta.venta, es_credito=tipo_venta.es_credito)
         db.add(new_tipo_venta)
         await db.commit()
         await db.refresh(new_tipo_venta)

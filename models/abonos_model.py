@@ -18,6 +18,8 @@ class Abonos(Base):
     monto = Column(Numeric(10, 2), nullable=False)
     tipo = Column(String(20), nullable=False, default=TIPO_PAGO)
     fecha = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # cobro de caja (con sus formas de pago) que registro el abono; null en abonos anteriores
+    pago_id = Column(Integer, ForeignKey("pagos.id"), nullable=True, index=True)
 
 
 class AbonoItem(BaseModel):

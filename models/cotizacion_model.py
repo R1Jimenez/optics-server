@@ -26,6 +26,10 @@ class Cotizaciones(Base):
     total_venta = Column(Numeric(10, 2), nullable=False)
     active = Column(Boolean, default=True)
     promocion_id = Column(Integer, ForeignKey("promociones.id"), nullable=True)
+    # cobro de caja que liquido el pago inicial; null = pendiente de cobro
+    pago_inicial_pago_id = Column(Integer, ForeignKey("pagos.id"), nullable=True, index=True)
+    # se marca al imprimir el ticket de liquidacion desde Cobrar > Liquidaciones
+    liquidacion_impresa = Column(Boolean, nullable=False, default=False, server_default="false")
 
     sucursal = relationship("Sucursal", backref="cotizaciones")
     usuario = relationship("User", backref="cotizaciones")

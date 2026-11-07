@@ -1,9 +1,10 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload, joinedload
 from database.database import get_db
+from database.paginacion import paginar
 from middleware.auth import get_current_user
 from models.traspasos_model import (
     Traspasos, TraspasoDetalle, TraspasoCreate, TraspasoItem, TraspasoOut, TraspasoResumenOut,
@@ -202,19 +203,18 @@ async def listar_traspasos(
         if destino_id is not None:
             query = query.where(Traspasos.sucursal_destino_id == destino_id)
 
-        total = await db.scalar(select(func.count()).select_from(query.subquery()))
-        result = await db.execute(
+        # many-to-one con joinedload: todo en una sola consulta junto con el total
+        total, filas = await paginar(
+            db,
             query.options(
-                selectinload(Traspasos.origen),
-                selectinload(Traspasos.destino),
-                selectinload(Traspasos.creador),
-                selectinload(Traspasos.modificador),
-            )
-            .order_by(Traspasos.id.desc())
-            .offset((pagina - 1) * por_pagina)
-            .limit(por_pagina)
+                joinedload(Traspasos.origen),
+                joinedload(Traspasos.destino),
+                joinedload(Traspasos.creador),
+                joinedload(Traspasos.modificador),
+            ),
+            (Traspasos.id.desc(),), pagina, por_pagina
         )
-        items = [TraspasoResumenOut(**_resumen(t)) for t in result.scalars().all()]
+        items = [TraspasoResumenOut(**_resumen(t)) for (t,) in filas]
         return TraspasosPaginaOut(total=total, pagina=pagina, por_pagina=por_pagina, items=items)
     except Exception as e:
         print(f"Error al listar traspasos: {e}")

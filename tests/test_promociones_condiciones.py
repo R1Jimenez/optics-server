@@ -28,12 +28,21 @@ def cond(**valores):
 
 # ---------- Reglas (sin BD) ----------
 
-def test_no_permite_dos_criterios_del_mismo_grupo():
+@pytest.mark.parametrize("extra, mensaje", [
+    ({"tipos_venta": [1], "plazos": [2]}, "tipo de venta o por plazo"),
+    ({"clientes": [1], "tipos_cliente": [2]}, "cliente o por tipo de cliente"),
+])
+def test_no_permite_dos_criterios_del_mismo_grupo(extra, mensaje):
     with pytest.raises(HTTPException) as exc:
-        api.normalizar_promocion(PromocionCreate(
-            nombre="X", descuento=10, permanente=True, sucursales=[1], tipos_venta=[1], plazos=[2]
-        ))
-    assert "tipo de venta o por plazo" in exc.value.detail
+        api.normalizar_promocion(PromocionCreate(nombre="X", descuento=10, permanente=True, sucursales=[1], **extra))
+    assert mensaje in exc.value.detail
+
+
+def test_permite_tipo_de_venta_con_cualquier_otro_criterio():
+    datos = api.normalizar_promocion(PromocionCreate(
+        nombre="X", descuento=10, permanente=True, sucursales=[1], tipos_venta=[1], productos=[2], tipos_cliente=[3]
+    ))
+    assert (datos.tipos_venta, datos.productos, datos.tipos_cliente) == ([1], [2], [3])
 
 
 def test_normaliza_ids_repetidos_de_condiciones():
@@ -43,9 +52,11 @@ def test_normaliza_ids_repetidos_de_condiciones():
 
 @pytest.mark.parametrize("condiciones, contexto, motivo", [
     (cond(), (1, 1, 1, 1), None),
+    (cond(), (None, None, None, None), None),
     (cond(tipos_venta=[2]), (1, 1, 1, 1), "tipo de venta"),
     (cond(tipos_venta=[2]), (2, 1, 1, 1), None),
     (cond(plazos=[3]), (2, 4, 1, 1), "plazo"),
+    (cond(plazos=[3]), (2, 3, 1, 1), None),
     (cond(clientes=[9]), (1, 1, 8, 1), "cliente"),
     (cond(tipos_cliente=[5]), (1, 1, 8, 5), None),
     (cond(tipos_cliente=[5]), (1, 1, None, None), "tipo de cliente"),
@@ -153,6 +164,27 @@ async def test_disponibles_filtra_por_condiciones(db, venta):
     assert vencida.id not in ids(con_cliente)
     assert general.id in ids(sin_cliente) and por_cliente.id not in ids(sin_cliente)
     assert not ({general.id, por_cliente.id} & ids(otra_sucursal))
+
+
+@pytest.mark.anyio
+async def test_solo_datos_generales_aplica_a_todo(db, venta):
+    """Sin capturar Tipo de Venta, Producto ni Cliente: aplica a cualquier venta, producto y cliente."""
+    v = venta
+    otro_tipo = TipoVenta(venta="PRUEBA Contado")
+    db.add(otro_tipo)
+    await db.flush()
+    otro_tipo_id = otro_tipo.id
+    general = await api.crear_promocion(_promo(v, nombre="PRUEBA Solo general"), db, v["usuario"])
+    assert (general.tipos_venta, general.productos, general.atributos_valores, general.clientes, general.tipos_cliente) == ([],) * 5
+
+    for tipo_venta_id, plazo_id, cliente_id in [(v["tipo_venta"], v["plazo"], v["cliente"]), (otro_tipo_id, None, None), (None, None, None)]:
+        disponibles = await api.promociones_disponibles(v["origen"].id, tipo_venta_id, plazo_id, cliente_id, db)
+        assert general.id in {p.id for p in disponibles}
+
+    cot = await create_cotizacion(_cotizacion(v, general.id), db, v["usuario"])
+    # ambos productos reciben el 20% (mayor que el 10% del cliente)
+    assert {d.descuento_porcentaje for d in cot.detalles} == {Decimal(20)}
+    assert cot.total_venta == Decimal("240.00")
 
 
 @pytest.mark.anyio

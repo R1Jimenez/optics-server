@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from database.database import get_db
+from database.paginacion import paginar
 from middleware.auth import get_current_user
 from models.users_model import User
 from models.conexiones_model import (
@@ -68,13 +69,10 @@ async def listar_conexiones(
         if hasta is not None:
             query = query.where(HistorialConexion.fecha < _a_utc_naive(hasta))
 
-        total = await db.scalar(select(func.count()).select_from(query.subquery()))
-        result = await db.execute(
-            query.order_by(HistorialConexion.fecha.desc(), HistorialConexion.id.desc())
-            .offset((pagina - 1) * por_pagina)
-            .limit(por_pagina)
+        total, filas = await paginar(
+            db, query, (HistorialConexion.fecha.desc(), HistorialConexion.id.desc()), pagina, por_pagina
         )
-        items = [ConexionOut.model_validate(c) for c in result.scalars().all()]
+        items = [ConexionOut.model_validate(c) for (c,) in filas]
         return ConexionesPaginaOut(total=total, pagina=pagina, por_pagina=por_pagina, items=items)
     except Exception as e:
         print(f"Error al listar conexiones: {e}")

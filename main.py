@@ -1,7 +1,11 @@
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from database.database import engine, Base
-from database.migraciones import aplicar_migraciones
+from database.migraciones import aplicar_migraciones, crear_tablas_faltantes
+from middleware.errores import manejar_http_exception, ManejoErrores, ReintentoLectura
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes import opticaroutes
@@ -14,7 +18,9 @@ from controllers import (cotizacion_controller, users_controller, estado_sucursa
                          atributos_valores_controller, precios_sucursal_controller, inventario_controller,
                          exploraciones_controller, info_referencial_controller, ordenes_trabajo_controller,
                          abonos_controller, traspasos_controller, promociones_controller,
-                         conexiones_controller)
+                         conexiones_controller, pagos_controller)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI()
 
@@ -22,8 +28,14 @@ app = FastAPI()
 @app.on_event("startup")
 async def startup():
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(crear_tablas_faltantes, Base.metadata)
         await aplicar_migraciones(conn)
+
+@app.on_event("shutdown")
+async def shutdown():
+    await engine.dispose()
+
+app.add_exception_handler(StarletteHTTPException, manejar_http_exception)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -49,6 +61,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         }
     )
 
+# El ultimo middleware agregado queda por fuera: CORS > GZip > reintento > manejo de errores > rutas
+app.add_middleware(ManejoErrores)
+app.add_middleware(ReintentoLectura)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -90,6 +106,7 @@ app.include_router(abonos_controller.router)
 app.include_router(traspasos_controller.router)
 app.include_router(promociones_controller.router)
 app.include_router(conexiones_controller.router)
+app.include_router(pagos_controller.router)
 @app.get("/")
 async def root():
     return {"message": "FastAPI + PostgresSQL funcionan!"}

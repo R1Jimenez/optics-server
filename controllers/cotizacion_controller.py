@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from database.database import get_db
+from database.paginacion import paginar
 from middleware.auth import get_current_user
 from models.abonos_model import Abonos
 from models.cotizacion_model import (
@@ -41,6 +42,29 @@ def _calcular_vencimiento(fecha_inicio: datetime, plazo_texto: str) -> datetime:
 
 def _referencia_presupuesto(cotizacion_id: int) -> str:
     return f"Presupuesto {cotizacion_id}"
+
+
+async def _inventarios(db: AsyncSession, sucursal_id: int, producto_ids) -> dict[int, InventarioSucursal]:
+    ids = set(producto_ids)
+    if not ids:
+        return {}
+    result = await db.execute(
+        select(InventarioSucursal).where(
+            InventarioSucursal.sucursal_id == sucursal_id,
+            InventarioSucursal.producto_id.in_(ids)
+        )
+    )
+    return {inv.producto_id: inv for inv in result.scalars().all()}
+
+
+async def _precios(db: AsyncSession, sucursal_id: int, producto_ids) -> dict[int, PreciosSucursal]:
+    ids = set(producto_ids)
+    if not ids:
+        return {}
+    result = await db.execute(
+        select(PreciosSucursal).where(PreciosSucursal.sucursal == sucursal_id, PreciosSucursal.producto.in_(ids))
+    )
+    return {p.producto: p for p in result.scalars().all()}
 
 
 async def _aplicar_descuentos(db: AsyncSession, detalles, pct_cliente, promocion, cond) -> Decimal:
@@ -104,27 +128,20 @@ async def create_cotizacion(
         movimientos = []
         total_normal = Decimal("0")
 
+        # inventario y precios de todos los productos en dos consultas
+        producto_ids = {item.producto_id for item in cotizacion.productos}
+        inventarios = await _inventarios(db, cotizacion.sucursal_id, producto_ids)
+        precios = await _precios(db, cotizacion.sucursal_id, producto_ids)
+
         for item in cotizacion.productos:
-            inv_result = await db.execute(
-                select(InventarioSucursal).where(
-                    InventarioSucursal.sucursal_id == cotizacion.sucursal_id,
-                    InventarioSucursal.producto_id == item.producto_id
-                )
-            )
-            inventario = inv_result.scalar_one_or_none()
+            inventario = inventarios.get(item.producto_id)
             if not inventario or inventario.existencia_actual < item.cantidad:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Existencia insuficiente para el producto {item.producto_id} en la sucursal {cotizacion.sucursal_id}"
                 )
 
-            precio_result = await db.execute(
-                select(PreciosSucursal).where(
-                    PreciosSucursal.sucursal == cotizacion.sucursal_id,
-                    PreciosSucursal.producto == item.producto_id
-                )
-            )
-            precio_sucursal = precio_result.scalar_one_or_none()
+            precio_sucursal = precios.get(item.producto_id)
             if not precio_sucursal:
                 raise HTTPException(
                     status_code=400,
@@ -247,12 +264,7 @@ async def listar_tickets(
         if hasta is not None:
             query = query.where(Cotizaciones.fecha < _a_utc_naive(hasta))
 
-        total = await db.scalar(select(func.count()).select_from(query.subquery()))
-        result = await db.execute(
-            query.order_by(Cotizaciones.fecha.desc(), Cotizaciones.id.desc())
-            .offset((pagina - 1) * por_pagina)
-            .limit(por_pagina)
-        )
+        total, filas = await paginar(db, query, (Cotizaciones.fecha.desc(), Cotizaciones.id.desc()), pagina, por_pagina)
 
         items = [
             TicketResumenOut(
@@ -261,7 +273,7 @@ async def listar_tickets(
                 cliente=f"{cliente.nombres} {cliente.apellidos}",
                 importe=cotizacion.total_venta
             )
-            for cotizacion, cliente in result.all()
+            for cotizacion, cliente in filas
         ]
         return TicketsPaginaOut(total=total, pagina=pagina, por_pagina=por_pagina, items=items)
     except Exception as e:
@@ -348,7 +360,9 @@ async def get_cotizaciones_en_espera(sucursal_id: int, db: AsyncSession = Depend
             .where(
                 Cotizaciones.sucursal_id == sucursal_id,
                 Cotizaciones.active.is_(True),
-                Cotizaciones.pago_restante > 0
+                # en espera = pago inicial pendiente de cobrar en caja
+                Cotizaciones.pago_inicial > 0,
+                Cotizaciones.pago_inicial_pago_id.is_(None)
             )
             .order_by(Cotizaciones.fecha.desc())
         )
@@ -425,14 +439,9 @@ async def update_cotizacion(
                 raise HTTPException(status_code=400, detail="Debe incluir al menos un producto en la cotizacion")
 
             # devolver al inventario la existencia de los productos que se van a reemplazar
+            anteriores = await _inventarios(db, cotizacion.sucursal_id, (d.producto_id for d in cotizacion.detalles))
             for detalle in cotizacion.detalles:
-                inv_result = await db.execute(
-                    select(InventarioSucursal).where(
-                        InventarioSucursal.sucursal_id == cotizacion.sucursal_id,
-                        InventarioSucursal.producto_id == detalle.producto_id
-                    )
-                )
-                inventario = inv_result.scalar_one_or_none()
+                inventario = anteriores.get(detalle.producto_id)
                 if inventario:
                     existencia_final = inventario.existencia_actual + detalle.cantidad
                     inventario.existencia_actual = existencia_final
@@ -451,27 +460,19 @@ async def update_cotizacion(
             detalles = []
             total_normal = Decimal("0")
 
+            nuevos_ids = {item.producto_id for item in cotizacion_update.productos}
+            inventarios = await _inventarios(db, sucursal_id, nuevos_ids)
+            precios = await _precios(db, sucursal_id, nuevos_ids)
+
             for item in cotizacion_update.productos:
-                inv_result = await db.execute(
-                    select(InventarioSucursal).where(
-                        InventarioSucursal.sucursal_id == sucursal_id,
-                        InventarioSucursal.producto_id == item.producto_id
-                    )
-                )
-                inventario = inv_result.scalar_one_or_none()
+                inventario = inventarios.get(item.producto_id)
                 if not inventario or inventario.existencia_actual < item.cantidad:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Existencia insuficiente para el producto {item.producto_id} en la sucursal {sucursal_id}"
                     )
 
-                precio_result = await db.execute(
-                    select(PreciosSucursal).where(
-                        PreciosSucursal.sucursal == sucursal_id,
-                        PreciosSucursal.producto == item.producto_id
-                    )
-                )
-                precio_sucursal = precio_result.scalar_one_or_none()
+                precio_sucursal = precios.get(item.producto_id)
                 if not precio_sucursal:
                     raise HTTPException(
                         status_code=400,
@@ -577,6 +578,8 @@ async def delete_cotizacion(
         cotizacion = result.scalar_one_or_none()
         if not cotizacion:
             raise HTTPException(status_code=404, detail="Cotizacion no encontrada")
+        if cotizacion.pago_inicial_pago_id is not None:
+            raise HTTPException(status_code=400, detail="No se puede eliminar una cotizacion cuyo pago inicial ya fue cobrado")
 
         abonos_result = await db.execute(select(Abonos.id).where(Abonos.cotizacion_id == cotizacion_id).limit(1))
         if abonos_result.first():
@@ -584,14 +587,9 @@ async def delete_cotizacion(
 
         # restaurar la existencia de los productos antes de eliminar la cotizacion
         movimientos = []
+        inventarios = await _inventarios(db, cotizacion.sucursal_id, (d.producto_id for d in cotizacion.detalles))
         for detalle in cotizacion.detalles:
-            inv_result = await db.execute(
-                select(InventarioSucursal).where(
-                    InventarioSucursal.sucursal_id == cotizacion.sucursal_id,
-                    InventarioSucursal.producto_id == detalle.producto_id
-                )
-            )
-            inventario = inv_result.scalar_one_or_none()
+            inventario = inventarios.get(detalle.producto_id)
             if inventario:
                 existencia_final = inventario.existencia_actual + detalle.cantidad
                 inventario.existencia_actual = existencia_final
